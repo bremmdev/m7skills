@@ -92,3 +92,7 @@ file unless they ask for it.
 
 Then state: "Applied N of M proposed edits." N MUST equal the number the user approved. If it
 does not, stop and report the discrepancy instead of continuing.
+
+## Styling
+
+The style contract in references/style-contract.md defines every tag and class the renderer may emit. Use this when rendering the HTML document.
