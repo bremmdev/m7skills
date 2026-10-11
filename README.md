@@ -8,6 +8,7 @@ Accessibility skills for coding agents. Each skill is a folder with a `SKILL.md`
 | --- | --- |
 | [`announcer`](skills/announcer/SKILL.md) | Gives a web codebase one shared screen reader announcer: a polite and an assertive live region with a queue, routed into open modal dialogs. Then it finds every live region, toast and announce call, decides whether each one should be replaced, kept, converted or removed, migrates them, and records in a browser what reaches screen readers. |
 | [`forced-colors`](skills/forced-colors/SKILL.md) | Reviews and fixes a web UI for forced colors (Windows contrast themes). Takes screenshots in normal, forced-dark and forced-light modes, finds controls and states that disappear or merge, fixes them with system colors following Fluent UI and Spectrum conventions, and writes a before/after HTML report. |
+| [`screen-reader-modes`](skills/screen-reader-modes/SKILL.md) | Finds what puts screen readers into focus, forms or application mode. Lists every role, native control, focusable element and key handler in a codebase, predicts per screen reader (JAWS, NVDA, Narrator, Orca; VoiceOver and TalkBack have no modes) what happens when focus lands there, presses each widget's keys in a browser, and decides per component whether the switch is needed, needless, missing or broken. Writes a report and a screenshot map of the modes. |
 
 ## Install
 
@@ -53,6 +54,8 @@ Keep the whole folder: `SKILL.md` links to the `references/`, `scripts/` and `as
 `forced-colors` captures screenshots with Node and Playwright or Puppeteer. Without them it falls back to the browser tools your agent has, or to a static review. See [`capture.md`](skills/forced-colors/references/capture.md).
 
 `announcer` runs its inventory with Node, and records announcements in a browser with Node and Playwright or Puppeteer. Without them it runs `recorder.js` through the browser tools your agent has, or says in its report that the browser check is missing. See [`testing.md`](skills/announcer/references/testing.md).
+
+`screen-reader-modes` runs its inventory with Node, and maps the modes of rendered pages with Node and Playwright or Puppeteer. Without them it runs `modes.js` through the browser tools your agent has, or predicts from the inventory and says in its report that the browser check is missing. See [`testing.md`](skills/screen-reader-modes/references/testing.md).
 
 ## Adding a skill
 
