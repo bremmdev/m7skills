@@ -14,7 +14,8 @@
       "strict": false,
       "skills": [
         "./skills/announcer",
-        "./skills/forced-colors"
+        "./skills/forced-colors",
+        "./skills/screen-reader-modes"
       ]
     }
   ]
