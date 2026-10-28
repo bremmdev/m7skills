@@ -4,11 +4,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ANNOUNCER_ATTRIBUTE,
+  BURST_WINDOW,
   DEFAULT_TIMEOUT,
   MESSAGE_INTERVAL,
   PRIMING_DELAY,
   QUEUE_DELAY,
   announce,
+  cancelAnnouncement,
   clearAnnouncer,
   ensureLiveRegion
 } from "./announcer";
@@ -68,8 +70,12 @@ const recordAdditions = (region: Element) => {
 // jsdom doesn't implement showModal() or :modal. A dialog with data-modal stands in for one opened with showModal()
 const originalMatches = Element.prototype.matches;
 
+// The burst warning in development. Silenced in every test, since several tests send bursts on purpose
+let warn: ReturnType<typeof vi.spyOn>;
+
 describe("announcer", () => {
   beforeEach(() => {
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.useFakeTimers();
     vi.spyOn(Element.prototype, "matches").mockImplementation(function (this: Element, selector: string) {
       if (selector === ":modal") {
@@ -88,6 +94,7 @@ describe("announcer", () => {
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   describe("regions", () => {
@@ -653,6 +660,195 @@ describe("announcer", () => {
       advance(QUEUE_DELAY);
       expect(messages("polite")).toEqual(["Step 2 of 3: shipping address"]);
       expect(document.activeElement).toBe(heading);
+    });
+  });
+
+  describe("cancelAnnouncement", () => {
+    it("drops the waiting message with the id, and other messages are still written", () => {
+      prime();
+      const stop = recordAdditions(getRegion("polite") as Element);
+      announce("Loading results", { id: "search" });
+      announce("Map updated", { id: "map" });
+      announce("Saved");
+
+      cancelAnnouncement("search");
+      advance(QUEUE_DELAY + MESSAGE_INTERVAL * 3);
+
+      expect(stop()).toEqual(["Map updated", "Saved"]);
+    });
+
+    // A delayed loading message that is no longer true: the user cancelled the search
+    it("drops a delayed message before its wait is over", () => {
+      prime();
+      const stop = recordAdditions(getRegion("polite") as Element);
+      announce("Loading results", { id: "search", delay: 1000 });
+      advance(400);
+
+      cancelAnnouncement("search");
+      advance(2000);
+
+      expect(stop()).toEqual([]);
+    });
+
+    it("keeps the other messages on time", () => {
+      prime();
+      announce("Loading results", { id: "search" });
+      announce("Saved");
+
+      cancelAnnouncement("search");
+      advance(QUEUE_DELAY);
+
+      expect(messages("polite")).toEqual(["Saved"]);
+    });
+
+    it("drops an assertive message too", () => {
+      prime();
+      announce("Connection lost", { politeness: "assertive", id: "connection" });
+
+      cancelAnnouncement("connection");
+      advance(QUEUE_DELAY + MESSAGE_INTERVAL);
+
+      expect(messages("assertive")).toEqual([]);
+    });
+
+    // Removing it would be silent (aria-relevant="additions"): the screen reader already has it
+    it("leaves a message that is already written until its timeout", () => {
+      prime();
+      announce("Loading results", { id: "search" });
+      advance(QUEUE_DELAY);
+
+      cancelAnnouncement("search");
+      expect(messages("polite")).toEqual(["Loading results"]);
+
+      advance(DEFAULT_TIMEOUT);
+      expect(messages("polite")).toEqual([]);
+    });
+
+    it("lets the id announce again afterwards, replacing its written message", () => {
+      prime();
+      announce("Loading results", { id: "search" });
+      advance(QUEUE_DELAY);
+      announce("Still loading", { id: "search" });
+      cancelAnnouncement("search");
+      advance(MESSAGE_INTERVAL);
+      expect(messages("polite")).toEqual(["Loading results"]);
+
+      announce("18 results", { id: "search" });
+      advance(QUEUE_DELAY);
+      expect(messages("polite")).toEqual(["18 results"]);
+    });
+
+    it("drops a message that waits for a new pair of regions", () => {
+      announce("Loading results", { id: "search" });
+      // Written at 100 ms into a pair created then, which waits 150 ms
+      advance(QUEUE_DELAY);
+      expect(getWrappers()).toHaveLength(1);
+
+      cancelAnnouncement("search");
+      advance(PRIMING_DELAY + MESSAGE_INTERVAL);
+
+      expect(messages("polite")).toEqual([]);
+    });
+
+    it("does nothing for an id without a waiting message", () => {
+      prime();
+      announce("Saved");
+
+      cancelAnnouncement("search");
+      advance(QUEUE_DELAY);
+
+      expect(messages("polite")).toEqual(["Saved"]);
+    });
+  });
+
+  // A warning instead of a maximum number of messages: a cap would have to drop messages it can't rank
+  describe("a burst in development", () => {
+    it("warns when three messages are written within a second, naming them", () => {
+      prime();
+      announce("One");
+      announce("Two", { id: "list" });
+      announce("Three");
+      advance(QUEUE_DELAY + MESSAGE_INTERVAL * 2);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain(`"One", "Two" (id list), "Three"`);
+    });
+
+    it("doesn't warn for two messages, or for three spread over more than a second", () => {
+      prime();
+      announce("One");
+      announce("Two");
+      advance(QUEUE_DELAY + MESSAGE_INTERVAL);
+      advance(BURST_WINDOW);
+      announce("Three");
+      advance(QUEUE_DELAY);
+
+      expect(messages("polite")).toEqual(["One", "Two", "Three"]);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it("warns once for a steady stream", () => {
+      prime();
+      for (let i = 1; i <= 10; i++) {
+        announce(`Message ${i}`);
+      }
+      advance(QUEUE_DELAY + MESSAGE_INTERVAL * 10);
+
+      expect(messages("polite")).toHaveLength(10);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it("warns again for a burst after a quiet second", () => {
+      prime();
+      announce("One");
+      announce("Two");
+      announce("Three");
+      advance(QUEUE_DELAY + MESSAGE_INTERVAL * 2);
+      advance(BURST_WINDOW + 1);
+
+      announce("Four");
+      announce("Five");
+      announce("Six");
+      advance(QUEUE_DELAY + MESSAGE_INTERVAL * 2);
+
+      expect(warn).toHaveBeenCalledTimes(2);
+    });
+
+    // The fix the warning points to
+    it("doesn't warn for a quick series from one source with an id and a delay", () => {
+      prime();
+      for (let position = 2; position <= 6; position++) {
+        announce(`Moved Apple to position ${position} of 6`, { id: "list", delay: 500 });
+        advance(200);
+      }
+      advance(500);
+
+      expect(messages("polite")).toEqual(["Moved Apple to position 6 of 6"]);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it("doesn't count cancelled messages", () => {
+      prime();
+      announce("Loading", { id: "search" });
+      announce("One");
+      announce("Two");
+      cancelAnnouncement("search");
+      advance(QUEUE_DELAY + MESSAGE_INTERVAL * 2);
+
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    // ADAPT: stub the flag the copied file checks (Jest: set process.env.NODE_ENV and restore it afterwards)
+    it("doesn't warn in production", () => {
+      vi.stubEnv("NODE_ENV", "production");
+      prime();
+      announce("One");
+      announce("Two");
+      announce("Three");
+      advance(QUEUE_DELAY + MESSAGE_INTERVAL * 2);
+
+      expect(messages("polite")).toEqual(["One", "Two", "Three"]);
+      expect(warn).not.toHaveBeenCalled();
     });
   });
 

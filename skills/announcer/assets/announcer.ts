@@ -38,8 +38,8 @@ export type AnnounceOptions = {
   from?: Element | null;
   /**
    * Identifies where the message comes from, for example one component instance. A message with the same `id` that is
-   * still waiting is replaced by the new one, so a burst only announces the latest. When it is written, an older
-   * message with the same `id` is removed from the live region
+   * still waiting is replaced by the new one, so a burst only announces the latest, and `cancelAnnouncement(id)` drops
+   * it. When it is written, an older message with the same `id` is removed from the live region
    */
   id?: string;
   /**
@@ -72,6 +72,23 @@ export const MESSAGE_INTERVAL = 250;
 export const PRIMING_DELAY = 150;
 /** Messages are removed after this long, so they aren't found as stray text when browsing the page */
 export const DEFAULT_TIMEOUT = 7000;
+/** In development, this many messages written within BURST_WINDOW log a warning: screen readers read every one */
+export const BURST_SIZE = 3;
+export const BURST_WINDOW = 1000;
+
+declare const process: { env: { NODE_ENV?: string } };
+
+// ADAPT: how the codebase tells development from production. Use its own flag, so a production build removes the
+// warning: `import.meta.env.DEV` (Vite), `process.env.NODE_ENV !== "production"` written out like this (webpack,
+// Next.js, Rollup or esbuild with a define). The try/catch below works without a bundler too, but stays in the build;
+// then drop the `declare const process` above
+const isDevelopment = () => {
+  try {
+    return process.env.NODE_ENV !== "production";
+  } catch {
+    return false;
+  }
+};
 
 type QueuedMessage = {
   message: string;
@@ -91,6 +108,9 @@ let lastWrite = Number.NEGATIVE_INFINITY;
 const createdAt = new WeakMap<Element, number>();
 // The last message written for each id, removed when a newer one with the same id is written
 const writtenById = new Map<string, HTMLElement>();
+// Development only: the messages written in the last BURST_WINDOW, and whether this burst was already reported
+let recentWrites: Array<{ at: number; message: string; id?: string }> = [];
+let burstReported = false;
 
 // Inline styles instead of a utility class, so the regions work without the app's CSS. Set through the CSSOM
 // (element.style), which a Content Security Policy without 'unsafe-inline' still allows
@@ -216,6 +236,25 @@ const write = (wrapper: Element, { message, politeness, id, timeout }: QueuedMes
   }, timeout);
 };
 
+// Warns once per burst instead of capping the queue: a cap would have to drop messages it can't rank (an error is no
+// more important to it than "Saved"), and the fix belongs in the source that sends them
+const reportBurst = ({ message, id }: QueuedMessage, now: number) => {
+  recentWrites = recentWrites.filter((write) => now - write.at <= BURST_WINDOW);
+  if (recentWrites.length === 0) {
+    burstReported = false;
+  }
+  recentWrites.push({ at: now, message, id });
+
+  if (recentWrites.length >= BURST_SIZE && !burstReported) {
+    burstReported = true;
+    const list = recentWrites.map((write) => `"${write.message}"${write.id === undefined ? "" : ` (id ${write.id})`}`);
+    console.warn(
+      `announcer: ${recentWrites.length} messages within ${BURST_WINDOW} ms, and screen readers read every one. ` +
+        `Merge them into one message, or give a source that repeats an id, and a delay for a quick series: ${list.join(", ")}`
+    );
+  }
+};
+
 // Sets the timer for the next message that can be written: when its wait is over, and 250 ms after the last message
 const schedule = () => {
   clearTimeout(timer);
@@ -254,6 +293,9 @@ const flush = () => {
   queue.splice(queue.indexOf(next), 1);
   write(wrapper, next);
   lastWrite = now;
+  if (isDevelopment()) {
+    reportBurst(next, now);
+  }
   schedule();
 };
 
@@ -303,6 +345,22 @@ export const announce = (message: string, options: AnnounceOptions = {}) => {
 };
 
 /**
+ * Cancels the waiting message with this `id`, for work that ends with nothing to say: the user cancels it, the request
+ * is aborted, or the component that announced is removed. Work that ends with a result or an error announces that
+ * with the same `id` instead, which replaces the waiting message. Messages from other sources stay queued. A message
+ * that is already written stays until its timeout: the screen reader already has it, and removing it is silent.
+ *
+ * @example
+ * announce("Loading results", { id: "search", delay: 1000 });
+ * // The user cancels the search before it finishes
+ * cancelAnnouncement("search");
+ */
+export const cancelAnnouncement = (id: string) => {
+  queue = queue.filter((item) => item.id !== id);
+  schedule();
+};
+
+/**
  * Cancels waiting messages and empties the live regions, for one politeness or both.
  */
 export const clearAnnouncer = (politeness?: Politeness) => {
@@ -311,6 +369,8 @@ export const clearAnnouncer = (politeness?: Politeness) => {
   if (!politeness) {
     lastWrite = Number.NEGATIVE_INFINITY;
     writtenById.clear();
+    recentWrites = [];
+    burstReported = false;
   }
 
   schedule();

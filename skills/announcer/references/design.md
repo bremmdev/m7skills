@@ -38,6 +38,7 @@ dialog (open, modal)
 | Export | Purpose |
 | --- | --- |
 | `announce(message, options?)` | Queue a message. Ignores empty text and runs nowhere without a `document` (SSR) |
+| `cancelAnnouncement(id)` | Drop the waiting message with this `id`, for work that ends with nothing to say: the user cancels a search, a request is aborted, the component is removed, so the delayed "Loading results" must go without a replacement. Other sources keep their messages; a message already written stays until its timeout |
 | `clearAnnouncer(politeness?)` | Cancel waiting messages and empty the regions, for one politeness or both; without an argument it also resets spacing and ids (tests use it between cases) |
 | `ensureLiveRegion(element?)` | Create the pair for the element's dialog (open or not) or `<body>` ahead of time. For modals when they open; internal for a library |
 | A binding per framework | Primes on mount and returns `announce` with `from` set to the component's element (React: [`../assets/use-announce.ts`](../assets/use-announce.ts)) |
@@ -65,17 +66,19 @@ dialog (open, modal)
 | Queue: 100 ms, then 250 ms apart | Messages from one moment are merged and ordered, the page settles (a closing dialog, a focus move), and screen readers get each message separately | Primer 150 ms, Fluent 500 ms |
 | `id` merges waiting messages | Holding an arrow key only announces the final position | Announcing every step |
 | `delay` debounces per `id` | A written message is already in the screen reader's queue, and removing it doesn't take it back; only not writing the in-between steps helps | A shorter interval, which only writes faster |
+| `cancelAnnouncement(id)` drops only what waits | `id` and `delay` leave messages waiting, and some outcomes need none: replacing isn't possible, so the waiting one is withdrawn. A written one is already with the screen reader, and removing it is silent | `announce("")` (empty messages are ignored on purpose); `clearAnnouncer()`, which drops every source's messages |
+| A warning in development for 3 messages written within a second, not a cap | Screen readers read every message, so a burst is a bug in its source; the warning names the messages, so the source gets an `id` and a `delay` or one merged message. It warns once per burst and is off in production | A maximum number of messages, which has to drop messages it can't rank (an error is no more important to it than "Saved") and hides the bug |
 | Priming: 150 ms for a new pair | Rule 1 in mechanics.md | |
 | Removed after 7 s | No stale messages when browsing; long enough to be read | Leaving them |
 | One `write()` | The transport can switch to `ariaNotify()` without changing the API | |
 
 ## Constants
 
-`QUEUE_DELAY` 100, `MESSAGE_INTERVAL` 250, `PRIMING_DELAY` 150, `DEFAULT_TIMEOUT` 7000. Keep them unless screen reader testing in the project shows a reason; a `delay` of 500 ms suited arrow-key reordering, and a typing-driven message should wait at least as long as the search's own debounce.
+`QUEUE_DELAY` 100, `MESSAGE_INTERVAL` 250, `PRIMING_DELAY` 150, `DEFAULT_TIMEOUT` 7000, `BURST_SIZE` 3 within `BURST_WINDOW` 1000 (the recorder's `burst` flag uses the same). Keep them unless screen reader testing in the project shows a reason; a `delay` of 500 ms suited arrow-key reordering, and a typing-driven message should wait at least as long as the search's own debounce.
 
 ## What it can't do
 
-It can't control the screen reader's queue. VoiceOver can cut a polite message off with an assertive one and drop polite messages that were waiting; a burst can still be read partly; a message the user missed can't be replayed. So messages stay short, few and polite, and anything the user needs later stays visible on the page.
+It can't control the screen reader's queue. VoiceOver can cut a polite message off with an assertive one and drop polite messages that were waiting; a burst can still be read partly; a message the user missed can't be replayed; `cancelAnnouncement` can't take back a message that was already written. So messages stay short, few and polite, and anything the user needs later stays visible on the page.
 
 It can't mark languages. A message is one string, written as text and read in the page's language, the same limit as `aria-label`: a Latin or French word in the old region's `<span lang>` is read with the page's voice. Visible text keeps its `lang`; a project that marks languages gets that change in its report.
 

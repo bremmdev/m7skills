@@ -10,7 +10,8 @@
 //   { t, type: "live", politeness, text, region, container, silent, newRegion }
 //   { t, type: "removal", ... } only for regions with aria-relevant removals or all
 //   { t, type: "ariaNotify", text, priority, silent }
-//   { t, type: "focus", text }
+//   { t, type: "focus", text, name, description }
+//   { t, type: "input", text } a key press, pointer press or value change; not in liveRegionLog()
 (() => {
   if (window.__liveRegionLog) return;
   const start = performance.now();
@@ -150,16 +151,70 @@
   });
   observer.observe(document, { subtree: true, childList: true, characterData: true });
 
+  // innerText keeps the breaks between blocks ("Errors. Name is required"), which textContent runs together
+  const textOf = (el) => clean(el.innerText || el.textContent);
+  const byIds = (el, attribute) =>
+    clean(
+      (el.getAttribute(attribute) || "")
+        .split(/\s+/)
+        .map((id) => id && document.getElementById(id))
+        .filter(Boolean)
+        .map(textOf)
+        .join(" ")
+    );
+
+  // Close to the accessible name screen readers read on focus: aria-labelledby, aria-label, a <label>, alt, the
+  // element's text, title, placeholder
+  function nameOf(el) {
+    const labels = el.labels ? Array.from(el.labels).map(textOf).join(" ") : "";
+    const own = /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) ? "" : textOf(el);
+    return (
+      byIds(el, "aria-labelledby") ||
+      clean(el.getAttribute("aria-label")) ||
+      clean(labels) ||
+      clean(el.getAttribute("alt")) ||
+      own ||
+      clean(el.getAttribute("title")) ||
+      clean(el.getAttribute("placeholder"))
+    ).slice(0, 200);
+  }
+
+  // The accessible description, which screen readers read after the name: aria-describedby, aria-description, or a
+  // title that isn't the name
+  function descriptionOf(el, name) {
+    const title = clean(el.getAttribute("title"));
+    return (byIds(el, "aria-describedby") || clean(el.getAttribute("aria-description")) || (title !== name ? title : "")).slice(0, 200);
+  }
+
+  // Screen readers get the focus event a moment later, after the page has rendered: a focus move in a callback often
+  // comes before the framework renders the field's error and aria-describedby. So read again after FOCUS_READ_DELAY,
+  // while the element still has focus.
+  const FOCUS_READ_DELAY = 50;
+  const readFocus = (entry, el) => {
+    entry.name = nameOf(el);
+    entry.description = descriptionOf(el, entry.name);
+    entry.text = `${el.tagName.toLowerCase()} "${entry.name}"`;
+  };
+
   document.addEventListener(
     "focusin",
     (event) => {
       const el = event.target;
-      // innerText keeps the breaks between blocks ("Errors. Name is required"), which textContent runs together
-      const name = el.getAttribute && (el.getAttribute("aria-label") || clean(el.innerText ?? el.textContent).slice(0, 80));
-      log.push({ t: now(), type: "focus", text: `${el.tagName.toLowerCase()} "${name || ""}"` });
+      if (!el.getAttribute) return;
+      const entry = { t: now(), type: "focus" };
+      readFocus(entry, el);
+      log.push(entry);
+      setTimeout(() => {
+        if (document.activeElement === el) readFocus(entry, el);
+      }, FOCUS_READ_DELAY);
     },
     true
   );
+
+  // What the user did, so a message after a new action isn't taken for a repeat of what focus read before it
+  for (const type of ["keydown", "pointerdown", "input"]) {
+    document.addEventListener(type, (event) => log.push({ t: now(), type: "input", text: event.key || type }), true);
+  }
 
   for (const proto of [window.Element && Element.prototype, window.Document && Document.prototype]) {
     if (!proto || typeof proto.ariaNotify !== "function") continue;
@@ -178,9 +233,10 @@
   }
 
   window.liveRegionLog = () =>
-    log.map((e) => {
+    log.filter((e) => e.type !== "input").map((e) => {
       const where = e.container ? ` ${e.politeness} in ${e.container}` : e.priority ? ` ${e.priority}` : "";
       const flags = [e.silent && `SILENT: ${e.silent}`, e.newRegion && "NEW REGION"].filter(Boolean).join(", ");
-      return `${String(e.t).padStart(6)} ms  ${e.type}${where}  "${e.text}"${flags ? `  (${flags})` : ""}`;
+      const text = e.type === "focus" ? `${e.text}${e.description ? ` | "${e.description}"` : ""}` : `"${e.text}"`;
+      return `${String(e.t).padStart(6)} ms  ${e.type}${where}  ${text}${flags ? `  (${flags})` : ""}`;
     });
 })();

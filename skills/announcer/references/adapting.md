@@ -4,10 +4,11 @@ The behavior comes from [`../assets/announcer.ts`](../assets/announcer.ts); ever
 
 ## Where it goes
 
-- **From a dependency, when one ships it.** The inventory lists dependencies with an announcer first. M7KIT (`@bremmdev/m7kit`) exports this design from 0.64.0: `announce`, `clearAnnouncer`, `useAnnounce`. Upgrade to it when needed (decisions.md says when that is a proposal), import from it, and add no copy: the app then shares one queue with the library's own components. Its `ensureLiveRegion` is internal, so a modal of the app's own primes its regions through `useAnnounce(ref)` in a component inside it.
+- **From a dependency, when one ships it.** The inventory lists dependencies with an announcer first. M7KIT (`@bremmdev/m7kit`) exports this design from 0.64.0: `announce`, `clearAnnouncer`, `useAnnounce`. Upgrade to it when needed (decisions.md says when that is a proposal), import from it, and add no copy: the app then shares one queue with the library's own components. Its `ensureLiveRegion` is internal, so a modal of the app's own primes its regions through `useAnnounce(ref)` in a component inside it. It exports `cancelAnnouncement` from the release after 0.66.0 (check the installed version's exports). With 0.66.0 or older, where a place needs one, propose the upgrade, or follow "Without `cancelAnnouncement`" in decisions.md when upgrading isn't possible.
 - **One module, one instance per page.** Put it with the shared utilities (`src/lib/`, `src/utils/`, a `ui` or `a11y` package in a monorepo), next to the framework binding. Every copy of the module has its own queue, so a page needs one copy: in a monorepo, one shared package; for a component library, a public export so apps use the library's copy.
-- **A library exports** `announce`, `clearAnnouncer`, the binding and the types. `ensureLiveRegion` stays internal unless the library's consumers build their own modals.
+- **A library exports** `announce`, `cancelAnnouncement`, `clearAnnouncer`, the binding and the types. `ensureLiveRegion` stays internal unless the library's consumers build their own modals.
 - **The attribute** is `data-<project>-announcer`. Two copies on one page (a library and the app) then reuse each other's regions, though not each other's queue.
+- **Development check**: the burst warning runs only in development. Use the flag the project's build replaces (`import.meta.env.DEV` in Vite, `process.env.NODE_ENV !== "production"` written out with webpack, Next.js, or a Rollup or esbuild define), so production builds drop it; keep the given try/catch only for code that runs without a bundler. Stub the same flag in the spec's production test.
 - **Language**: TypeScript as given; for JavaScript, strip the types. Another language (a server-rendered app with a little JS) gets the same file as a script module.
 
 ## Framework bindings
@@ -34,6 +35,7 @@ export function announcer(node: Element) {
 @Injectable({ providedIn: "root" })
 export class Announcer {
   announce(message: string, options?: AnnounceOptions) { announce(message, options); }
+  cancel(id: string) { cancelAnnouncement(id); }
   clear(politeness?: Politeness) { clearAnnouncer(politeness); }
 }
 ```

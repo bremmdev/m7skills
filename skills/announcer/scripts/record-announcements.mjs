@@ -204,11 +204,45 @@ function flagsFor(log) {
       i += within.length - 1;
     }
   }
+  for (const { e, focus, part } of focusDuplicates(log)) {
+    const advice =
+      part === "name"
+        ? "redundant: leave it out of the message"
+        : "expected, since descriptions can be switched off: keep it, and list the double in the report";
+    flags.push(`focus-duplicate: "${e.text}" repeats the ${part} of ${focus.text}, which focus read ${e.t - focus.t} ms before (${advice})`);
+  }
   return flags;
 }
 
+// A message within this long after a focus change competes with what focus reads
+const FOCUS_WINDOW = 2000;
+
+// Messages that repeat what the focused element just read: the message is in its name, which every screen reader
+// reads, or it overlaps its description ("2 errors: Name is required. …" after focus on the field described by the
+// first), which users can switch off. A key press, click or input after the focus change starts a new action, whose
+// message is no repeat
+function focusDuplicates(log) {
+  const found = [];
+  const lower = (text) => (text || "").toLowerCase();
+  let focus = null;
+  for (const e of log) {
+    if (e.type === "focus") focus = e;
+    if (e.type === "input") focus = null;
+    if ((e.type !== "live" && e.type !== "ariaNotify") || e.silent || !focus || e.t - focus.t > FOCUS_WINDOW) continue;
+    const message = lower(e.text);
+    const description = lower(focus.description);
+    if (lower(focus.name).includes(message)) {
+      found.push({ e, focus, part: "name" });
+    } else if (description && (description.includes(message) || message.includes(description))) {
+      found.push({ e, focus, part: "description" });
+    }
+  }
+  return found;
+}
+
 // Heard: in a region a screen reader can hear, which existed before the message. expectFocus is for messages that
-// focus reads out (an error summary that receives focus): the focused element had that text when focus arrived.
+// focus reads out (an error summary that receives focus, a field described by its error): the focused element's name
+// or description had that text when focus arrived.
 function check(log, expect = [], expectNot = [], expectFocus = []) {
   const sent = log.filter((e) => e.type === "live" || e.type === "ariaNotify");
   const heard = sent.filter((e) => !e.silent && !e.newRegion).map((e) => e.text);
@@ -227,7 +261,7 @@ function check(log, expect = [], expectNot = [], expectFocus = []) {
   for (const text of expectNot) {
     if (heard.some((h) => h.includes(text))) failures.push(`"${text}" was heard, but shouldn't be`);
   }
-  const focused = log.filter((e) => e.type === "focus").map((e) => e.text);
+  const focused = log.filter((e) => e.type === "focus").map((e) => `${e.text} ${e.description ?? ""}`);
   for (const text of expectFocus) {
     if (!focused.some((f) => f.includes(text))) failures.push(`expected focus on an element saying "${text}", not seen`);
   }

@@ -68,7 +68,7 @@ const BLOCK_COMMENTS = [
 // Dependencies that ship an announcer. When its design matches (M7KIT from 0.64 is this design), the codebase uses
 // it rather than a copy; otherwise its calls are migrated (references/decisions.md)
 const ANNOUNCER_PACKAGES = {
-  "@bremmdev/m7kit": "announce, useAnnounce from 0.64.0: this design",
+  "@bremmdev/m7kit": "announce, useAnnounce from 0.64.0: this design (no cancelAnnouncement up to 0.66.0)",
   "react-aria": "announce (@react-aria/live-announcer)",
   "react-aria-components": "announce via react-aria",
   "@react-aria/live-announcer": "announce",
